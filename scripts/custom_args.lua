@@ -1,3 +1,13 @@
+function schema()
+    return {
+        name = "Connection Test",
+        description = "Test of changing connection type",
+        args = {
+            user_agent = "String"
+        }
+    }
+end
+
 function on_request(req, args)
     local new_req = "";
     for i in string.gmatch(req, "[^\r\n]+") do

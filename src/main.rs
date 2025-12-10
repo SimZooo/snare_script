@@ -1,6 +1,6 @@
 use std::{fs, path::Path};
 
-use luajit::State;
+use luajit::{LuaObject, State};
 use serde_json::{Value, json};
 use serde::Deserialize;
 
@@ -57,18 +57,30 @@ fn run_func(args: Vec<ArgValue>, function: &str, state: &mut State, n_res: usize
             results.push(ReturnValue::Integer(state.to_int(index).unwrap()));
         } else if state.is_string(index) {
             results.push(ReturnValue::String(state.to_str(index).unwrap().to_string()));
+        } else {
+            println!("USERADTA");
         }
+
         state.pop(1);
     }
 
     results
 }
 
-fn run_script(name: &str, state: &mut State, req: String, args: &str) {
+fn get_schema(path: &str, state: &mut State) -> Vec<ReturnValue> {
+    state.do_file(Path::new(path)).unwrap();
+    let results = run_func(vec![], "schema", state, 1);
+    results
+}
+
+fn run_script(name: &str, state: &mut State, req: String, args: &str) -> Vec<ReturnValue> {
+    let path = &format!("scripts/{}.lua", name);
+    state.do_file(Path::new(path)).unwrap();
+
     // Setup script for lua
     let Ok(args_json) = serde_json::from_str::<Vec<Value>>(args) else {
         eprintln!("Malformed arguments");
-        return;
+        return vec![];
     };
 
     // Setup script args
@@ -82,30 +94,40 @@ fn run_script(name: &str, state: &mut State, req: String, args: &str) {
             script_args.push((k.clone(), value));
         }
     }
-    let path = &format!("scripts/{}.lua", name);
-    state.do_file(Path::new(path)).unwrap();
+    println!("{:?}", run_func(vec![], "schema", state, 1));
 
     let args = vec![ArgValue::String(req), ArgValue::Table(script_args)];
     let n = args.len();
-    let results = run_func(args, "on_request", state, n);
-    println!("{:?}", results);
+
+    run_func(args, "on_request", state, n)
+}
+
+struct Engine {
+    pub state: State
+}
+
+impl Engine {
+    fn new() -> Self {
+        let mut engine = Engine { state: State::new() };
+        engine.state.open_libs();
+        engine
+    }
 }
 
 fn main() {
-    let req: String = fs::read_to_string("req.txt").unwrap();
+    let mut engine = Engine::new();
 
-    let mut state = State::new();
-    state.open_libs();
+    let req: String = fs::read_to_string("req.txt").unwrap();
 
     // Examples of running with args
     {
         // Args specific to script
         let script_args_raw = r#"[{"connection": {"String": "simzooo"}}]"#;
-        run_script("connection", &mut state, req.clone(), script_args_raw);
+        run_script("connection", &mut engine.state, req.clone(), script_args_raw);
     }
     {
         // Args specific to script
         let script_args_raw = r#"[{"user_agent": {"String": "simzooo"}}]"#;
-        run_script("custom_args", &mut state, req.clone(), script_args_raw);
+        run_script("custom_args", &mut engine.state, req.clone(), script_args_raw);
     }
 }
