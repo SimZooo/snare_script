@@ -1,86 +1,25 @@
-use std::{fs, path::Path};
+use std::fs;
 
-use luajit::{LuaObject, State};
-use serde_json::{Value, json};
-use serde::Deserialize;
+use mlua::{Function, Lua};
+use serde_json::Value;
 
-#[derive(Debug, Clone, Deserialize)]
-enum ReturnValue {
-    Boolean(bool),
-    Integer(i32),
-    String(String),
+fn run_func(args: (mlua::String, mlua::Table), function: &str, engine: &mut Engine) -> String {
+    let function: Function = engine.state.globals().get(function).unwrap();
+    let res: String = function.call(args).unwrap();
+
+    res
 }
 
-#[derive(Debug, Clone, Deserialize)]
-enum ArgValue {
-    Boolean(bool),
-    Integer(i32),
-    String(String),
-    Table(Vec<(String, ArgValue)>)
-}
-
-fn push_arg(arg: ArgValue, state: &mut State) {
-    match arg {
-        ArgValue::String(s) => state.push(s),
-        ArgValue::Boolean(b) => state.push(b),
-        ArgValue::Integer(i) => state.push(i),
-        ArgValue::Table(i) => {
-            state.new_table();
-            for (k, v) in i {
-                push_arg(v, state);
-                state.set_field(-2, &k);
-            }
-        }
-    }
-}
-
-fn run_func(args: Vec<ArgValue>, function: &str, state: &mut State, n_res: usize) -> Vec<ReturnValue> {
-    state.get_global(function);
-
-    for arg in &args {
-        push_arg(arg.clone(), state);
-    }
-
-    let res = state.pcall(args.len() as i32, n_res as i32, 0);
-    if let Err((status, e)) = res {
-        eprintln!("Error from script: {e}. Thread status: {:?}", status);
-        return vec![];
-    }
-
-    let mut results = vec![];
-    for _ in 0..n_res {
-        // Pops always from top of stack
-        let index = -1;
-        if state.is_bool(index) {
-            results.push(ReturnValue::Boolean(state.to_bool(index).unwrap()));
-        } else if state.is_number(index) {
-            results.push(ReturnValue::Integer(state.to_int(index).unwrap()));
-        } else if state.is_string(index) {
-            results.push(ReturnValue::String(state.to_str(index).unwrap().to_string()));
-        } else {
-            println!("USERADTA");
-        }
-
-        state.pop(1);
-    }
-
-    results
-}
-
-fn get_schema(path: &str, state: &mut State) -> Vec<ReturnValue> {
-    state.do_file(Path::new(path)).unwrap();
-    let results = run_func(vec![], "schema", state, 1);
-    results
-}
-
-fn run_script(name: &str, state: &mut State, req: String, args: &str) -> Vec<ReturnValue> {
+fn run_script(name: &str, engine: &mut Engine, req: String, args: &str) -> String {
+    engine.state = Lua::new();
     let path = &format!("scripts/{}.lua", name);
-    state.do_file(Path::new(path)).unwrap();
+    let script = fs::read_to_string(path).unwrap();
+    let _ = engine.state.load(&script).exec().unwrap();
 
     // Setup script for lua
     let Ok(args_json) = serde_json::from_str::<Vec<Value>>(args) else {
         eprintln!("Malformed arguments");
-        return vec![];
+        return String::new()
     };
 
     // Setup script args
@@ -90,26 +29,48 @@ fn run_script(name: &str, state: &mut State, req: String, args: &str) -> Vec<Ret
             continue;
         };
         for (k, v) in args_obj.iter() {
-            let value: ArgValue = serde_json::from_value(v.clone()).unwrap();
-            script_args.push((k.clone(), value));
+            // Check what type of value we have
+            match v {
+                Value::String(s) => {
+                    script_args.push((k.clone(), s.clone()));
+                }
+                Value::Bool(b) => {
+                    script_args.push((k.clone(), b.to_string()));
+                }
+                Value::Number(n) => {
+                    script_args.push((k.clone(), n.to_string()));
+                }
+                Value::Object(obj) => {
+                    // Handle nested objects like {"String": "simzooo"}
+                    // You might want to handle this differently based on your needs
+                    if let Some(Value::String(s)) = obj.get("String") {
+                        script_args.push((k.clone(), s.clone()));
+                    }
+                }
+                _ => {
+                    eprintln!("Unsupported value type for key: {}", k);
+                }
+            }
         }
     }
-    println!("{:?}", run_func(vec![], "schema", state, 1));
 
-    let args = vec![ArgValue::String(req), ArgValue::Table(script_args)];
-    let n = args.len();
+    let tbl = engine.state.create_table().unwrap();
+    for (k, v) in script_args {
+        tbl.set(k, v).unwrap();
+    }
 
-    run_func(args, "on_request", state, n)
+    let args = (engine.state.create_string(req).unwrap(), tbl);
+
+    run_func(args, "on_request", engine)
 }
 
 struct Engine {
-    pub state: State
+    pub state: Lua
 }
 
 impl Engine {
     fn new() -> Self {
-        let mut engine = Engine { state: State::new() };
-        engine.state.open_libs();
+        let engine = Engine { state: Lua::new() };
         engine
     }
 }
@@ -122,12 +83,14 @@ fn main() {
     // Examples of running with args
     {
         // Args specific to script
-        let script_args_raw = r#"[{"connection": {"String": "simzooo"}}]"#;
-        run_script("connection", &mut engine.state, req.clone(), script_args_raw);
+        let script_args_raw = r#"[{"connection": {"String": "HEISANN"}}]"#;
+        let res = run_script("connection", &mut engine, req.clone(), script_args_raw);
+        println!("{}", res);
     }
     {
         // Args specific to script
         let script_args_raw = r#"[{"user_agent": {"String": "simzooo"}}]"#;
-        run_script("custom_args", &mut engine.state, req.clone(), script_args_raw);
+        let res = run_script("custom_args", &mut engine, req.clone(), script_args_raw);
+        println!("{}", res);
     }
 }

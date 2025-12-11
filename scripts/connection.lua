@@ -13,7 +13,7 @@ function on_request(req, args)
     for i in string.gmatch(req, "[^\r\n]+") do
         local part = string.lower(i)
         if string.match(part, "^%s*connection%s*:%s*keep%-alive") then
-            part = args.connection
+            part = "connection: "..args.connection
         end
         new_req = new_req..part.."\r\n"
     end
