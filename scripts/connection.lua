@@ -1,9 +1,9 @@
 function schema()
     return {
         name = "Connection Test",
-        description = "Test of changing connection type",
+        description = "Test of changing connection header",
         args = {
-            user_agent = "String"
+            connection = "String"
         }
     }
 end
