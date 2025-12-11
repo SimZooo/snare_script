@@ -128,7 +128,7 @@ pub struct ScriptMetadata {
     pub script_args: Value
 }
 
-pub fn parse_table(table: &mlua::Table) -> Value {
+fn parse_table(table: &mlua::Table) -> Value {
     let mut map = serde_json::Map::new();
     for pair in table.pairs::<mlua::Value, mlua::Value>() {
         if let Ok((k, v)) = pair {
@@ -154,4 +154,14 @@ pub fn parse_table(table: &mlua::Table) -> Value {
     }
 
     serde_json::Value::Object(map)
+}
+
+
+pub fn get_table(table: &mlua::Value) -> Option<Value> {
+    let Some(table) = table.as_table() else {
+        return None
+    };
+
+    let map = parse_table(table);
+    Some(map)
 }
