@@ -54,6 +54,14 @@ impl Script {
         })
     }
 
+    pub fn get_args(self) -> ScriptResult<mlua::Value> {
+        let Ok(mut lua_state) = self.lua_state.lock() else {
+            return Err(ScriptError::LockError("Failed to lock lua state".to_string()))
+        };
+
+        Ok(Self::run_func(None, "schema", &mut lua_state)?)
+    }
+
     pub async fn execute(&self, req: String, args: String) -> ScriptResult<mlua::Value>  {
         let Ok(mut lua_state) = self.lua_state.lock() else {
             return Err(ScriptError::LockError("Failed to lock lua state".to_string()))

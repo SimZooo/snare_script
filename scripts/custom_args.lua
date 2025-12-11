@@ -13,9 +13,11 @@ function on_request(req, args)
     for i in string.gmatch(req, "[^\r\n]+") do
         local part = string.lower(i)
         if string.match(part, "^%s*user%-agent") then
-            part = "user-agent: "..args.user_agent
+            part = "User-Agent: "..args.user_agent
+            new_req = new_req..part.."\r\n"
+        else
+            new_req = new_req..i.."\r\n"
         end
-        new_req = new_req..part.."\r\n"
     end
 
     return new_req, true
