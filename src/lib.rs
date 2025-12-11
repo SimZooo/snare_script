@@ -1,22 +1,42 @@
-use std::fs;
+use std::{fs, io, sync::{Arc, Mutex}};
 
 use mlua::{Function, Lua};
 use serde_json::Value;
+use thiserror::Error;
 
+#[derive(Clone)]
 pub struct Script {
     path: String,
-    lua_state: Lua,
+    lua_state: Arc<Mutex<Lua>>,
     pub metadata: ScriptMetadata
 }
 
-impl Script {
-    pub fn new(path: &str) -> Script {
-        let script = fs::read_to_string(path).unwrap();
-        let mut lua_state = Lua::new();
-        let _ = lua_state.load(&script).exec().unwrap();
+#[derive(Error, Debug)]
+pub enum ScriptError {
+    #[error("Mutex locking error: {0}")]
+    LockError(String),
+    #[error("Lua error: {0}")]
+    LuaError(#[from] mlua::Error),
+    #[error("JSON error: {0}")]
+    JsonError(#[from] serde_json::Error),
+    #[error("IO error: {0}")]
+    IoError(#[from] io::Error),
+    #[error("Script error: {0}")]
+    Error(String)
+}
 
-        let schema = Self::run_func(None, "schema", &mut lua_state);
-        let table = schema.as_table().unwrap();
+pub type ScriptResult<T> = Result<T, ScriptError>;
+
+impl Script {
+    pub fn new(path: &str) -> ScriptResult<Script> {
+        let script = fs::read_to_string(path)?;
+        let mut lua_state = Lua::new();
+        let _ = lua_state.load(&script).exec()?;
+
+        let schema = Self::run_func(None, "schema", &mut lua_state)?;
+        let Some(table) = schema.as_table() else {
+            return Err(ScriptError::Error("No valid table in required function schema".to_string()))
+        };
         let schema = parse_table(table);
 
         let name = schema.get("name").unwrap_or(&Value::from("")).to_string();
@@ -24,20 +44,20 @@ impl Script {
         let args = schema.get("args").unwrap_or(&Value::from("")).clone();
         let metadata = ScriptMetadata { name, description, script_args: args };
 
-        Script {
+        Ok(Script {
             path: path.to_string(),
-            lua_state,
+            lua_state: Arc::new(Mutex::new(lua_state)),
             metadata
-        }
+        })
     }
 
-    pub fn run(&mut self, req: String, args: String) -> mlua::Value {
+    pub async fn execute(&self, req: String, args: String) -> ScriptResult<mlua::Value>  {
+        let Ok(mut lua_state) = self.lua_state.lock() else {
+            return Err(ScriptError::LockError("Failed to lock lua state".to_string()))
+        };
 
         // Setup script for lua
-        let Ok(args_json) = serde_json::from_str::<Vec<Value>>(&args) else {
-            eprintln!("Malformed arguments");
-            return mlua::Value::default()
-        };
+        let args_json = serde_json::from_str::<Vec<Value>>(&args)?;
 
         // Setup script args
         let mut script_args = vec![];
@@ -69,28 +89,28 @@ impl Script {
             }
         }
 
-        let tbl = self.lua_state.create_table().unwrap();
+        let tbl = lua_state.create_table()?;
         for (k, v) in script_args {
-            tbl.set(k, v).unwrap();
+            tbl.set(k, v)?;
         }
 
-        let args = (self.lua_state.create_string(req).unwrap(), tbl);
-        Self::run_func(Some(args), "on_request", &mut self.lua_state)
+        let args = (lua_state.create_string(req)?, tbl);
+        Ok(Self::run_func(Some(args), "on_request", &mut lua_state)?)
     }
 
-    fn run_func(args: Option<(mlua::String, mlua::Table)>, function: &str, lua: &mut Lua) -> mlua::Value {
-        let function: Function = lua.globals().get(function).unwrap();
+    fn run_func(args: Option<(mlua::String, mlua::Table)>, function: &str, lua: &mut Lua) -> ScriptResult<mlua::Value> {
+        let function: Function = lua.globals().get(function)?;
 
         if let Some(args) = args {
-            return function.call(args).unwrap();
+            return Ok(function.call(args)?);
         } else {
-            return function.call(()).unwrap();
+            return Ok(function.call(())?);
         }
     }
 
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ScriptMetadata {
     pub name: String,
     pub description: String,
