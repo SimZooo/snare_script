@@ -11,6 +11,9 @@ pub struct Script {
     pub metadata: ScriptMetadata
 }
 
+unsafe impl Send for Script {}
+unsafe impl Sync for Script {}
+
 #[derive(Error, Debug)]
 pub enum ScriptError {
     #[error("Mutex locking error: {0}")]
