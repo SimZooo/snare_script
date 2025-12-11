@@ -54,7 +54,7 @@ impl Script {
         })
     }
 
-    pub fn get_args(self) -> ScriptResult<mlua::Value> {
+    pub fn get_args(&self) -> ScriptResult<mlua::Value> {
         let Ok(mut lua_state) = self.lua_state.lock() else {
             return Err(ScriptError::LockError("Failed to lock lua state".to_string()))
         };
