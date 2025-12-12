@@ -42,7 +42,8 @@ impl Script {
         };
         let schema = parse_table(table);
 
-        let name = schema.get("name").unwrap_or(&Value::from("")).to_string();
+        let name_str = schema.get("name").and_then(|v| v.as_str()).unwrap_or("Invalid name");
+        let name = name_str.to_string();
         let description  = schema.get("description").unwrap_or(&Value::from("")).to_string();
         let args = schema.get("args").unwrap_or(&Value::from("")).clone();
         let metadata = ScriptMetadata { name, description, script_args: args };
@@ -59,7 +60,9 @@ impl Script {
             return Err(ScriptError::LockError("Failed to lock lua state".to_string()))
         };
 
-        Ok(Self::run_func(None, "schema", &mut lua_state)?)
+        let res = Self::run_func(None, "schema", &mut lua_state)?;
+
+        Ok(res)
     }
 
     pub async fn execute(&self, req: String, args: String) -> ScriptResult<String>  {
